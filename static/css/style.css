@@ -1,0 +1,136 @@
+/* TripSplit — Bootstrap extension layer */
+:root {
+  --ts-bg: #f6f7f9;
+  --ts-surface: #ffffff;
+  --ts-primary: #0d6e6e;
+  --ts-primary-hover: #0a5757;
+  --ts-accent: #e8f4f4;
+  --ts-radius: 14px;
+  --ts-shadow: 0 8px 30px rgba(13, 110, 110, 0.08);
+}
+
+.ts-body {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, var(--ts-bg) 0%, #eef0f3 100%);
+  font-feature-settings: "kern" 1, "liga" 1;
+}
+
+.ts-nav {
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(8px);
+}
+
+.ts-brand {
+  color: var(--ts-primary) !important;
+  letter-spacing: -0.02em;
+}
+
+.ts-footer {
+  margin-top: auto;
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.ts-card {
+  border-radius: var(--ts-radius);
+  animation: ts-fade-in 0.45s ease-out both;
+  box-shadow: var(--ts-shadow);
+}
+
+.ts-fade-in {
+  animation: ts-fade-in 0.45s ease-out both;
+}
+
+@keyframes ts-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.ts-scale-hover {
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.ts-scale-hover:hover {
+  transform: scale(1.02);
+}
+
+.ts-scale-hover:active {
+  transform: scale(0.98);
+}
+
+.btn-ts-primary {
+  --bs-btn-bg: var(--ts-primary);
+  --bs-btn-border-color: var(--ts-primary);
+  --bs-btn-hover-bg: var(--ts-primary-hover);
+  --bs-btn-hover-border-color: var(--ts-primary-hover);
+  --bs-btn-active-bg: var(--ts-primary-hover);
+  --bs-btn-active-border-color: var(--ts-primary-hover);
+  color: #fff;
+}
+
+.btn-ts-settle {
+  background: #0b5ed7;
+  border-color: #0b5ed7;
+  color: #fff;
+}
+
+.btn-ts-settle:hover {
+  background: #084298;
+  border-color: #084298;
+  color: #fff;
+}
+
+.ts-member-pill.active {
+  background-color: var(--ts-primary) !important;
+  border-color: var(--ts-primary) !important;
+  color: #fff !important;
+  box-shadow: 0 4px 14px rgba(13, 110, 110, 0.35);
+}
+
+.ts-mono {
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, "Cascadia Code", "Segoe UI Mono", monospace;
+}
+
+.tracking-wide {
+  letter-spacing: 0.12em;
+}
+
+.ts-summary-box {
+  background: var(--ts-accent);
+  border: 1px solid rgba(13, 110, 110, 0.12);
+}
+
+.ts-table thead th {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #6c757d;
+  border-bottom-width: 1px;
+}
+
+.ts-badge-paid {
+  background-color: #198754 !important;
+}
+
+.ts-badge-pending {
+  background-color: #ffc107 !important;
+  color: #1a1a1a !important;
+}
+
+.ts-badge-settled {
+  background-color: #0d6efd !important;
+}
+
+@media (max-width: 576px) {
+  .ts-card .card-body {
+    padding: 1.25rem !important;
+  }
+}

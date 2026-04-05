@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Confirm expense payment · TripSplit{% endblock %}
+{% block content %}
+<div class="row justify-content-center ts-fade-in">
+  <div class="col-md-7 col-lg-5">
+    <div class="card ts-card border-0 shadow-sm">
+      <div class="card-body p-4 p-md-5">
+        <a href="{{ url_for('group_page', gid=gid) }}" class="small text-decoration-none mb-3 d-inline-block">← Back to group</a>
+        <h1 class="h4 mb-3">Pay expense</h1>
+        <p class="text-muted small mb-4">Confirm whether the payer actually paid. The expense is stored only after you choose an option below.</p>
+        <div class="p-3 rounded ts-summary-box mb-4">
+          <div class="d-flex justify-content-between"><span class="text-muted">Payer</span><strong id="pay-payer">…</strong></div>
+          <div class="d-flex justify-content-between mt-2"><span class="text-muted">Amount</span><strong class="ts-mono" id="pay-amt">…</strong></div>
+          <div class="mt-2 small text-muted" id="pay-desc"></div>
+        </div>
+        <div id="upi-block" class="mb-3 d-none">
+          <a href="#" id="btn-upi" class="btn btn-success w-100 btn-lg ts-scale-hover mb-2">Pay with UPI</a>
+          <p class="small text-muted mb-0" id="upi-hint"></p>
+        </div>
+        <button type="button" class="btn btn-outline-secondary w-100 mb-2 ts-scale-hover" id="btn-cash-paid">Paid with cash — mark <span class="badge ts-badge-paid align-middle">PAID</span></button>
+        <button type="button" class="btn btn-outline-warning w-100 mb-3 ts-scale-hover" id="btn-pending">Not paid yet — save as <span class="badge ts-badge-pending align-middle">PENDING</span></button>
+        <p id="err" class="text-danger small d-none mb-0"></p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  const gid = {{ gid|tojson }};
+  const params = new URLSearchParams(window.location.search);
+  const payerId = params.get('payer_id');
+  const amount = params.get('amount');
+  const description = params.get('description') || '';
+
+  if (!payerId || !amount) {
+    document.querySelector('.card-body').innerHTML = '<p class="text-danger">Missing payment details. <a href="/group/' + gid + '">Return to group</a></p>';
+  } else {
+    document.getElementById('pay-amt').textContent = '₹' + parseFloat(amount).toFixed(2);
+    document.getElementById('pay-desc').textContent = description;
+
+    async function loadPayer() {
+      const res = await fetch('/api/groups/' + gid);
+      const data = await res.json();
+      if (!data.ok) return;
+      const m = data.members.find(x => String(x.id) === String(payerId));
+      document.getElementById('pay-payer').textContent = m ? m.name : 'Unknown';
+
+      const u = await fetch(`/api/groups/${gid}/upi/expense?payer_id=${encodeURIComponent(payerId)}&amount=${encodeURIComponent(amount)}&description=${encodeURIComponent(description)}`);
+      const upi = await u.json();
+      if (upi.ok) {
+        document.getElementById('upi-block').classList.remove('d-none');
+        document.getElementById('btn-upi').href = upi.upi_link;
+        if (!upi.has_upi) {
+          document.getElementById('upi-hint').textContent = 'Add a UPI ID to this member on the group page for a valid payee address. Link still opens your UPI app with amount filled where supported.';
+        } else {
+          document.getElementById('upi-hint').textContent = 'Opens PhonePe / GPay / Paytm with amount prefilled (device dependent).';
+        }
+      }
+    }
+
+    async function save(status) {
+      const err = document.getElementById('err');
+      err.classList.add('d-none');
+      const res = await fetch('/api/groups/' + gid + '/expenses', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          payer_id: parseInt(payerId, 10),
+          description,
+          amount: parseFloat(amount),
+          status,
+        }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        err.textContent = data.error || 'Failed';
+        err.classList.remove('d-none');
+        return;
+      }
+      window.location.href = '/group/' + gid;
+    }
+
+    document.getElementById('btn-cash-paid').addEventListener('click', () => save('PAID'));
+    document.getElementById('btn-pending').addEventListener('click', () => save('PENDING'));
+
+    loadPayer();
+  }
+})();
+</script>
+{% endblock %}

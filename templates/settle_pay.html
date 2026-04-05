@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Settlement payment · TripSplit{% endblock %}
+{% block content %}
+<div class="row justify-content-center ts-fade-in">
+  <div class="col-md-7 col-lg-5">
+    <div class="card ts-card border-0 shadow-sm">
+      <div class="card-body p-4 p-md-5">
+        <a href="{{ url_for('group_page', gid=gid) }}" class="small text-decoration-none mb-3 d-inline-block">← Back to group</a>
+        <h1 class="h4 mb-3">Settlement</h1>
+        <p class="text-muted small mb-4">Pay the suggested amount to settle balances. UPI flows are tracked when you confirm after paying.</p>
+        <div class="p-3 rounded ts-summary-box mb-4">
+          <div class="d-flex justify-content-between"><span class="text-muted">You pay</span><strong id="lbl-from">…</strong></div>
+          <div class="d-flex justify-content-between mt-2"><span class="text-muted">To</span><strong id="lbl-to">…</strong></div>
+          <div class="d-flex justify-content-between mt-2"><span class="text-muted">Amount</span><strong class="ts-mono" id="lbl-amt">…</strong></div>
+        </div>
+        <div id="upi-block" class="mb-3 d-none">
+          <a href="#" id="btn-upi" class="btn btn-success w-100 btn-lg ts-scale-hover mb-2">Pay with UPI</a>
+          <p class="small text-muted mb-0" id="upi-hint"></p>
+        </div>
+        <button type="button" class="btn btn-ts-settle w-100 mb-2 ts-scale-hover" id="btn-confirm-upi">I paid via UPI — record <span class="badge ts-badge-settled align-middle">SETTLED</span></button>
+        <button type="button" class="btn btn-outline-secondary w-100 mb-3 ts-scale-hover" id="btn-cash">Paid cash — record settled (not auto-verified)</button>
+        <p id="err" class="text-danger small d-none mb-0"></p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  const gid = {{ gid|tojson }};
+  const p = new URLSearchParams(window.location.search);
+  const fromId = p.get('from_id');
+  const toId = p.get('to_id');
+  const amount = p.get('amount');
+  const fromName = p.get('from_name') || '';
+  const toName = p.get('to_name') || '';
+
+  if (!fromId || !toId || !amount) {
+    document.querySelector('.card-body').innerHTML = '<p class="text-danger">Missing settlement details. <a href="/group/' + gid + '">Return to group</a></p>';
+  } else {
+    document.getElementById('lbl-from').textContent = fromName || 'Member #' + fromId;
+    document.getElementById('lbl-to').textContent = toName || 'Member #' + toId;
+    document.getElementById('lbl-amt').textContent = '₹' + parseFloat(amount).toFixed(2);
+
+    async function loadUpi() {
+      const note = 'TripSplit ' + fromName + '→' + toName;
+      const u = await fetch(`/api/groups/${gid}/upi/settlement?to_id=${encodeURIComponent(toId)}&amount=${encodeURIComponent(amount)}&note=${encodeURIComponent(note)}`);
+      const upi = await u.json();
+      if (upi.ok) {
+        document.getElementById('upi-block').classList.remove('d-none');
+        document.getElementById('btn-upi').href = upi.upi_link;
+        document.getElementById('upi-hint').textContent = upi.has_upi
+          ? 'Amount prefilled for payee. Confirm below after you send.'
+          : 'Add payee UPI on the group page for best results.';
+      }
+    }
+
+    async function record(ptype) {
+      const err = document.getElementById('err');
+      err.classList.add('d-none');
+      const res = await fetch('/api/groups/' + gid + '/settlements', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          from_user: parseInt(fromId, 10),
+          to_user: parseInt(toId, 10),
+          amount: parseFloat(amount),
+          payment_type: ptype,
+          confirmed: true,
+        }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        err.textContent = data.error || 'Failed';
+        err.classList.remove('d-none');
+        return;
+      }
+      window.location.href = '/group/' + gid;
+    }
+
+    document.getElementById('btn-confirm-upi').addEventListener('click', () => record('UPI'));
+    document.getElementById('btn-cash').addEventListener('click', () => record('CASH'));
+
+    loadUpi();
+  }
+})();
+</script>
+{% endblock %}

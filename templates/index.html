@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}TripSplit — Start a group{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-6">
+    <div class="card ts-card ts-fade-in shadow-sm border-0">
+      <div class="card-body p-4 p-md-5">
+        <h1 class="h3 mb-2">Start a new group</h1>
+        <p class="text-muted mb-4">No login — you get a shareable link and a 6-character group ID. Add expenses, pay with UPI, and settle in fewer transactions.</p>
+        <form id="create-form" class="ts-fade-in" style="animation-delay: 0.08s">
+          <label class="form-label" for="leader">Your name (group leader)</label>
+          <input type="text" class="form-control form-control-lg mb-3" id="leader" name="leader" required maxlength="80"
+                 placeholder="e.g. Adesh" autocomplete="name">
+          <button type="submit" class="btn btn-ts-primary btn-lg w-100 ts-scale-hover">Create group</button>
+        </form>
+        <p id="create-error" class="text-danger small mt-3 mb-0 d-none"></p>
+      </div>
+    </div>
+    <ul class="list-unstyled mt-4 small text-muted ts-fade-in" style="animation-delay: 0.15s">
+      <li class="mb-1">· Smart settlement — minimal “who pays whom” steps</li>
+      <li class="mb-1">· Track expense payments (paid / pending) and UPI settlements</li>
+      <li>· Optional UPI ID on members for one-tap <code class="small">upi://pay</code> links</li>
+    </ul>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+document.getElementById('create-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const err = document.getElementById('create-error');
+  err.classList.add('d-none');
+  const leader = document.getElementById('leader').value.trim();
+  const res = await fetch('/api/groups', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ leader }),
+  });
+  const data = await res.json();
+  if (!data.ok) {
+    err.textContent = data.error || 'Something went wrong';
+    err.classList.remove('d-none');
+    return;
+  }
+  window.location.href = data.redirect;
+});
+</script>
+{% endblock %}

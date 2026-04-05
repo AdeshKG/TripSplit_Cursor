@@ -1,0 +1,18 @@
+# TripSplit on Render: connect this repo, use "Apply render.yaml" or create a Web Service manually.
+# Free tier: SQLite lives on ephemeral disk — data can reset on deploy/restart. Add a Render Disk (paid)
+# and set DATABASE_PATH to the mount path (e.g. /var/data/tripsplit.db) for persistence.
+
+services:
+  - type: web
+    name: tripsplit
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --bind 0.0.0.0:$PORT app:app
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.0"
+      - key: SECRET_KEY
+        generateValue: true
+      # Optional persistence (uncomment after adding a Disk in the Render dashboard):
+      # - key: DATABASE_PATH
+      #   value: /var/data/tripsplit.db

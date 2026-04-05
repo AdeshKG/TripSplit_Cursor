@@ -1,0 +1,299 @@
+{% extends "base.html" %}
+{% block title %}Group {{ gid }} · TripSplit{% endblock %}
+{% block content %}
+<div id="group-app" data-gid="{{ gid }}" class="ts-fade-in">
+  <div class="d-flex flex-wrap align-items-start justify-content-between gap-3 mb-4">
+    <div>
+      <h1 class="h3 mb-1">Your group</h1>
+      <p class="text-muted mb-0 small">Leader: <span id="field-leader">…</span></p>
+    </div>
+    <div class="text-end">
+      <div class="small text-muted">Group ID</div>
+      <div class="fs-4 fw-bold ts-mono tracking-wide" id="field-gid">{{ gid }}</div>
+      <button type="button" class="btn btn-sm btn-outline-secondary mt-2 ts-scale-hover" id="btn-copy-link">Copy group link</button>
+      <span id="copy-toast" class="small text-success ms-2 d-none">Copied!</span>
+    </div>
+  </div>
+
+  <div class="row g-4">
+    <div class="col-lg-5">
+      <div class="card ts-card border-0 shadow-sm mb-4">
+        <div class="card-body">
+          <h2 class="h5 card-title">Members</h2>
+          <ul class="list-group list-group-flush mb-3" id="member-list"></ul>
+          <form id="join-form" class="border-top pt-3">
+            <label class="form-label small text-muted">Join with your name</label>
+            <div class="input-group mb-2">
+              <input type="text" class="form-control" id="join-name" maxlength="80" placeholder="Name" required autocomplete="name">
+            </div>
+            <div class="input-group mb-2">
+              <input type="text" class="form-control" id="join-upi" maxlength="100" placeholder="UPI ID (optional, for one-tap pay)">
+            </div>
+            <button class="btn btn-ts-primary w-100 ts-scale-hover" type="submit">Join group</button>
+            <p id="join-error" class="text-danger small mt-2 mb-0 d-none"></p>
+          </form>
+        </div>
+      </div>
+
+      <div class="card ts-card border-0 shadow-sm">
+        <div class="card-body">
+          <h2 class="h5 card-title">Add expense</h2>
+          <p class="small text-muted">Pick who paid — no typing names.</p>
+          <div class="mb-3">
+            <div class="small text-muted mb-2">Payer</div>
+            <div class="d-flex flex-wrap gap-2" id="payer-buttons"></div>
+          </div>
+          <label class="form-label small">Description</label>
+          <input type="text" class="form-control mb-2" id="exp-desc" maxlength="200" placeholder="Dinner, cab, hotel…">
+          <label class="form-label small">Amount (₹)</label>
+          <input type="number" class="form-control mb-3" id="exp-amt" min="0.01" step="0.01" placeholder="0.00">
+          <button type="button" class="btn btn-outline-primary w-100 ts-scale-hover" id="btn-expense-continue" disabled>Continue to payment</button>
+          <p id="expense-hint" class="small text-muted mt-2 mb-0">Select a payer to continue. Expense is saved only after you confirm payment on the next step.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-7">
+      <div class="card ts-card border-0 shadow-sm mb-4">
+        <div class="card-body">
+          <h2 class="h5 card-title">Expenses</h2>
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0 ts-table">
+              <thead>
+                <tr>
+                  <th>Payer</th>
+                  <th>Description</th>
+                  <th class="text-end">Amount</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="expense-rows">
+                <tr><td colspan="4" class="text-muted small">Loading…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="card ts-card border-0 shadow-sm mb-4">
+        <div class="card-body">
+          <h2 class="h5 card-title">Balances</h2>
+          <p class="small text-muted">Equal split among members listed on each expense (everyone in the group at the time). Totals paid counts only <strong>PAID</strong> expenses.</p>
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0 ts-table">
+              <thead>
+                <tr>
+                  <th>Member</th>
+                  <th class="text-end">Paid (₹)</th>
+                  <th class="text-end">Share (₹)</th>
+                  <th class="text-end">Net (₹)</th>
+                </tr>
+              </thead>
+              <tbody id="balance-rows"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="card ts-card border-0 shadow-sm mb-4">
+        <div class="card-body">
+          <h2 class="h5 card-title">Who should pay whom</h2>
+          <p class="small text-muted">Fewest UPI transfers to settle current balances (after recorded settlements).</p>
+          <ul class="list-group list-group-flush mb-0" id="suggested-list"></ul>
+        </div>
+      </div>
+
+      <div class="card ts-card border-0 shadow-sm">
+        <div class="card-body">
+          <h2 class="h5 card-title">Settlement payments</h2>
+          <p class="small text-muted">UPI settlements are tracked when you confirm after paying. Cash is recorded only if you confirm here (not auto-verified).</p>
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0 ts-table">
+              <thead>
+                <tr>
+                  <th>From</th>
+                  <th>To</th>
+                  <th class="text-end">Amount</th>
+                  <th>Type</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="settlement-rows"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  const root = document.getElementById('group-app');
+  const gid = root.dataset.gid;
+
+  let state = null;
+  let selectedPayer = null;
+
+  function badge(status, type) {
+    if (type === 'expense') {
+      if (status === 'PAID') return '<span class="badge ts-badge-paid">Paid</span>';
+      return '<span class="badge ts-badge-pending">Pending</span>';
+    }
+    if (status === 'SETTLED') return '<span class="badge ts-badge-settled">Settled</span>';
+    return '<span class="badge ts-badge-pending">Pending</span>';
+  }
+
+  function fmt(n) {
+    const x = Number(n);
+    if (Number.isNaN(x)) return '—';
+    return x.toFixed(2);
+  }
+
+  function render() {
+    if (!state) return;
+    document.getElementById('field-leader').textContent = state.group.leader;
+
+    const mlist = document.getElementById('member-list');
+    mlist.innerHTML = state.members.map(m => {
+      const upi = m.upi_id
+        ? `<span class="small text-muted ms-1">· ${escapeHtml(m.upi_id)}</span>`
+        : '';
+      return `<li class="list-group-item d-flex justify-content-between align-items-center px-0">
+        <span>${escapeHtml(m.name)}${upi}</span>
+        <span class="small text-muted">#${m.id}</span>
+      </li>`;
+    }).join('') || '<li class="list-group-item px-0 text-muted small">No members yet</li>';
+
+    const pwrap = document.getElementById('payer-buttons');
+    pwrap.innerHTML = state.members.map(m => {
+      const active = selectedPayer === m.id ? 'active' : '';
+      return `<button type="button" class="btn btn-outline-secondary ts-member-pill ts-scale-hover ${active}" data-id="${m.id}">${escapeHtml(m.name)}</button>`;
+    }).join('');
+    pwrap.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        selectedPayer = parseInt(btn.dataset.id, 10);
+        render();
+        document.getElementById('btn-expense-continue').disabled = !selectedPayer;
+      });
+    });
+
+    const er = document.getElementById('expense-rows');
+    if (!state.expenses.length) {
+      er.innerHTML = '<tr><td colspan="4" class="text-muted small">No expenses yet</td></tr>';
+    } else {
+      er.innerHTML = state.expenses.map(e => `
+        <tr class="ts-fade-in">
+          <td>${escapeHtml(e.payer_name)}</td>
+          <td>${escapeHtml(e.description)}</td>
+          <td class="text-end">₹${fmt(e.amount)}</td>
+          <td>${badge(e.status, 'expense')}</td>
+        </tr>`).join('');
+    }
+
+    const br = document.getElementById('balance-rows');
+    br.innerHTML = state.balances.map(b => `
+      <tr>
+        <td>${escapeHtml(b.name)}</td>
+        <td class="text-end">₹${fmt(b.paid_total)}</td>
+        <td class="text-end">₹${fmt(b.share_total)}</td>
+        <td class="text-end fw-medium ${b.balance > 0.005 ? 'text-success' : b.balance < -0.005 ? 'text-danger' : ''}">₹${fmt(b.balance)}</td>
+      </tr>`).join('');
+
+    const sl = document.getElementById('suggested-list');
+    if (!state.suggested_settlements.length) {
+      sl.innerHTML = '<li class="list-group-item px-0 text-muted small">All square (or add expenses / members).</li>';
+    } else {
+      sl.innerHTML = state.suggested_settlements.map(s => `
+        <li class="list-group-item px-0 d-flex flex-wrap justify-content-between align-items-center gap-2">
+          <span><strong>${escapeHtml(s.from_name)}</strong> pays <strong>${escapeHtml(s.to_name)}</strong> <span class="ts-mono">₹${fmt(s.amount)}</span></span>
+          <a class="btn btn-sm btn-ts-primary ts-scale-hover"
+             href="/group/${gid}/settle/pay?from_id=${s.from_id}&to_id=${s.to_id}&amount=${encodeURIComponent(s.amount)}&from_name=${encodeURIComponent(s.from_name)}&to_name=${encodeURIComponent(s.to_name)}">Pay</a>
+        </li>`).join('');
+    }
+
+    const sr = document.getElementById('settlement-rows');
+    if (!state.settlements.length) {
+      sr.innerHTML = '<tr><td colspan="5" class="text-muted small">No settlement payments recorded</td></tr>';
+    } else {
+      sr.innerHTML = state.settlements.map(s => `
+        <tr>
+          <td>${escapeHtml(s.from_name)}</td>
+          <td>${escapeHtml(s.to_name)}</td>
+          <td class="text-end">₹${fmt(s.amount)}</td>
+          <td>${s.payment_type}</td>
+          <td>${badge(s.status, 'settlement')}</td>
+        </tr>`).join('');
+    }
+  }
+
+  function escapeHtml(s) {
+    if (!s) return '';
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  async function load() {
+    const res = await fetch('/api/groups/' + gid);
+    const data = await res.json();
+    if (!data.ok) {
+      document.getElementById('expense-rows').innerHTML = '<tr><td colspan="4" class="text-danger small">Could not load group</td></tr>';
+      return;
+    }
+    state = data;
+    render();
+  }
+
+  document.getElementById('btn-copy-link').addEventListener('click', async () => {
+    const url = window.location.origin + '/group/' + gid;
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      prompt('Copy this link:', url);
+    }
+    const t = document.getElementById('copy-toast');
+    t.classList.remove('d-none');
+    setTimeout(() => t.classList.add('d-none'), 2000);
+  });
+
+  document.getElementById('join-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const err = document.getElementById('join-error');
+    err.classList.add('d-none');
+    const name = document.getElementById('join-name').value.trim();
+    const upi_id = document.getElementById('join-upi').value.trim();
+    const res = await fetch('/api/groups/' + gid + '/members', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, upi_id: upi_id || undefined }),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      err.textContent = data.error || 'Could not join';
+      err.classList.remove('d-none');
+      return;
+    }
+    document.getElementById('join-name').value = '';
+    document.getElementById('join-upi').value = '';
+    await load();
+  });
+
+  document.getElementById('btn-expense-continue').addEventListener('click', () => {
+    const desc = document.getElementById('exp-desc').value.trim();
+    const amt = document.getElementById('exp-amt').value;
+    if (!selectedPayer || !desc || !amt || parseFloat(amt) <= 0) {
+      alert('Select payer, description, and a valid amount.');
+      return;
+    }
+    const q = new URLSearchParams({
+      payer_id: selectedPayer,
+      description: desc,
+      amount: amt,
+    });
+    window.location.href = '/group/' + gid + '/expense/pay?' + q.toString();
+  });
+
+  load();
+})();
+</script>
+{% endblock %}
