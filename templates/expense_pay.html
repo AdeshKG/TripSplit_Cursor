@@ -13,9 +13,9 @@
           <div class="d-flex justify-content-between mt-2"><span class="text-muted">Amount</span><strong class="ts-mono" id="pay-amt">…</strong></div>
           <div class="mt-2 small text-muted" id="pay-desc"></div>
         </div>
-        <div id="upi-block" class="mb-3 d-none">
-          <button type="button" id="btn-upi" class="btn btn-success w-100 btn-lg ts-scale-hover mb-2">Pay with UPI</button>
-          <p class="small text-muted mb-0" id="upi-hint"></p>
+        <div id="upi-block" class="mb-3">
+          <button type="button" id="btn-upi" class="btn btn-success w-100 btn-lg ts-scale-hover mb-2">Pay via UPI</button>
+          <p class="small text-muted mb-0" id="upi-hint">Preparing UPI link...</p>
         </div>
         <div id="desktop-fallback" class="d-none mb-3 text-center">
           <img id="upi-qr" src="" alt="UPI QR" class="img-fluid rounded border mb-2">
@@ -59,7 +59,6 @@
       const upi = await u.json();
       if (upi.ok) {
         upiLink = upi.upi_link;
-        document.getElementById('upi-block').classList.remove('d-none');
         const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
         if (!isMobile) {
           document.getElementById('upi-block').classList.add('d-none');
@@ -78,8 +77,11 @@
         if (!upi.has_upi) {
           document.getElementById('upi-hint').textContent = 'Add a UPI ID to this member on the group page for a valid payee address. Link still opens your UPI app with amount filled where supported.';
         } else {
-          document.getElementById('upi-hint').textContent = 'Opens PhonePe / GPay / Paytm with amount prefilled (device dependent).';
+          document.getElementById('upi-hint').textContent = 'Tap Pay via UPI to open available UPI apps.';
         }
+      } else {
+        document.getElementById('btn-upi').disabled = true;
+        document.getElementById('upi-hint').textContent = upi.error || 'UPI unavailable. Add valid payer UPI ID (example: name@upi).';
       }
     }
 

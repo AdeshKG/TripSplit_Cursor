@@ -23,6 +23,7 @@
           <h2 class="h5 card-title">Members</h2>
           <label class="form-label small text-muted" for="current-user-select">You are</label>
           <select id="current-user-select" class="form-select mb-3"></select>
+          <p id="whoami-hint" class="small text-warning d-none mb-2">Select "You are" to see your Pay buttons.</p>
           <ul class="list-group list-group-flush mb-3" id="member-list"></ul>
           <form id="join-form" class="border-top pt-3">
             <label class="form-label small text-muted">Join with your name</label>
@@ -172,6 +173,12 @@
     document.getElementById('field-group-name').textContent = state.group.name || 'Your group';
     document.getElementById('field-leader').textContent = state.group.leader;
     currentUserId = state.current_user_id || currentUserId;
+    const whoamiHint = document.getElementById('whoami-hint');
+    if (!currentUserId) {
+      whoamiHint.classList.remove('d-none');
+    } else {
+      whoamiHint.classList.add('d-none');
+    }
     const splitBtn = document.getElementById('btn-final-split');
     if (state.is_leader) {
       splitBtn.classList.remove('d-none');
