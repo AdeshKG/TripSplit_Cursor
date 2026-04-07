@@ -10,6 +10,7 @@
     <div class="text-end">
       <div class="small text-muted">Group ID</div>
       <div class="fs-4 fw-bold ts-mono tracking-wide" id="field-gid">{{ gid }}</div>
+      <button type="button" class="btn btn-sm btn-success mt-2 ts-scale-hover d-none" id="btn-final-split">Final Split</button>
       <button type="button" class="btn btn-sm btn-outline-secondary mt-2 ts-scale-hover" id="btn-copy-link">Copy group link</button>
       <span id="copy-toast" class="small text-success ms-2 d-none">Copied!</span>
     </div>
@@ -171,6 +172,12 @@
     document.getElementById('field-group-name').textContent = state.group.name || 'Your group';
     document.getElementById('field-leader').textContent = state.group.leader;
     currentUserId = state.current_user_id || currentUserId;
+    const splitBtn = document.getElementById('btn-final-split');
+    if (state.is_leader) {
+      splitBtn.classList.remove('d-none');
+    } else {
+      splitBtn.classList.add('d-none');
+    }
 
     const mlist = document.getElementById('member-list');
     mlist.innerHTML = state.members.map(m => {
@@ -346,6 +353,16 @@
 
   document.getElementById('btn-reminders').addEventListener('click', async () => {
     await fetch(`/api/groups/${gid}/notifications/reminders`, { method: 'POST' });
+    await load();
+  });
+  document.getElementById('btn-final-split').addEventListener('click', async () => {
+    const res = await fetch(`/api/groups/${gid}/split-final`, { method: 'POST' });
+    const data = await res.json();
+    if (!data.ok) {
+      alert(data.error || 'Could not run final split');
+      return;
+    }
+    alert(`Generated ${data.created} settlement transaction(s).`);
     await load();
   });
   document.getElementById('current-user-select').addEventListener('change', async (e) => {

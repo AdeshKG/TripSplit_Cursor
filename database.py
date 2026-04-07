@@ -44,6 +44,7 @@ def init_db():
                 id TEXT PRIMARY KEY,
                 name TEXT,
                 leader TEXT NOT NULL,
+                last_split_paid_expense_id INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT DEFAULT (datetime('now'))
             );
 
@@ -109,6 +110,10 @@ def init_db():
 
         if not _column_exists(conn, "groups", "name"):
             conn.execute("ALTER TABLE groups ADD COLUMN name TEXT")
+        if not _column_exists(conn, "groups", "last_split_paid_expense_id"):
+            conn.execute(
+                "ALTER TABLE groups ADD COLUMN last_split_paid_expense_id INTEGER NOT NULL DEFAULT 0"
+            )
         if not _column_exists(conn, "expenses", "split_type"):
             conn.execute("ALTER TABLE expenses ADD COLUMN split_type TEXT NOT NULL DEFAULT 'EQUAL'")
         if _column_exists(conn, "members", "upi_id"):
@@ -428,3 +433,65 @@ def compute_balances_and_suggestions(conn, gid: str):
         }
 
     return per_member, net, suggested
+
+
+def generate_final_split_transactions(gid: str) -> tuple[bool, str, int]:
+    with get_db() as conn:
+        group = conn.execute(
+            "SELECT id, last_split_paid_expense_id FROM groups WHERE id = ?",
+            (gid,),
+        ).fetchone()
+        if not group:
+            return False, "Group not found", 0
+
+        open_tx = conn.execute(
+            "SELECT 1 FROM transactions WHERE group_id = ? AND status IN ('PENDING', 'CLAIMED_PAID') LIMIT 1",
+            (gid,),
+        ).fetchone()
+        if open_tx:
+            return False, "Settle existing pending transactions before final split", 0
+
+        latest_paid = conn.execute(
+            "SELECT COALESCE(MAX(id), 0) AS max_id FROM expenses WHERE group_id = ? AND status = 'PAID'",
+            (gid,),
+        ).fetchone()["max_id"]
+        if int(latest_paid) == 0:
+            return False, "No PAID expenses to split", 0
+        if int(latest_paid) <= int(group["last_split_paid_expense_id"]):
+            return False, "Split already generated. Add new PAID expense to split again.", 0
+
+        members = list_members(conn, gid)
+        if not members:
+            return False, "No members in group", 0
+        member_ids = [int(m["id"]) for m in members]
+
+        paid_rows = conn.execute(
+            "SELECT payer_id, amount FROM expenses WHERE group_id = ? AND status = 'PAID'",
+            (gid,),
+        ).fetchall()
+        total = sum(float(r["amount"]) for r in paid_rows)
+        share = total / len(member_ids)
+
+        net = {mid: -share for mid in member_ids}
+        for r in paid_rows:
+            net[int(r["payer_id"])] += float(r["amount"])
+
+        suggestions = minimize_settlements(net)
+        created = 0
+        for from_id, to_id, amount in suggestions:
+            if amount <= 0.0:
+                continue
+            conn.execute(
+                """
+                INSERT INTO transactions (group_id, sender_id, receiver_id, amount, status, payment_type)
+                VALUES (?, ?, ?, ?, 'PENDING', 'UPI')
+                """,
+                (gid, int(from_id), int(to_id), float(amount)),
+            )
+            created += 1
+
+        conn.execute(
+            "UPDATE groups SET last_split_paid_expense_id = ? WHERE id = ?",
+            (int(latest_paid), gid),
+        )
+        return True, "ok", created

@@ -1,13 +1,17 @@
 import os
 import re
+from pathlib import Path
 from urllib.parse import quote
 
-from flask import Flask, jsonify, render_template, request, session, url_for
+from flask import Flask, jsonify, render_template, request, send_file, session, url_for
 
 import database as db
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-tripsplit-change-me")
+USER_LOGO_PATH = Path(
+    r"C:\Users\Adesh\.cursor\projects\d-MoneySplit-Cursor\assets\c__Users_Adesh_AppData_Roaming_Cursor_User_workspaceStorage_5cef859fbc3a528527164922f32be2f1_images_Logo-50f01eb4-ea6a-4901-83cf-598e38c46717.png"
+)
 
 
 def upi_deep_link(payee_upi: str, payee_name: str, amount: float, note: str) -> str:
@@ -60,6 +64,11 @@ def _group_state(gid: str):
         current_user_id = _current_user_id(gid)
         if current_user_id:
             notifications = [dict(n) for n in db.list_notifications(conn, gid, current_user_id)]
+        leader_member = conn.execute(
+            "SELECT id FROM members WHERE group_id = ? AND name = ? ORDER BY id LIMIT 1",
+            (gid, group["leader"]),
+        ).fetchone()
+        leader_member_id = int(leader_member["id"]) if leader_member else None
 
     member_by_id = {m["id"]: dict(m) for m in members}
     sug_named = []
@@ -84,6 +93,8 @@ def _group_state(gid: str):
         "suggested_settlements": sug_named,
         "notifications": notifications,
         "current_user_id": current_user_id,
+        "leader_member_id": leader_member_id,
+        "is_leader": bool(current_user_id and leader_member_id and current_user_id == leader_member_id),
     }
 
 
@@ -226,6 +237,26 @@ def api_add_expense(gid):
     return jsonify({"ok": True, "expense_id": eid})
 
 
+@app.post("/api/groups/<gid>/split-final")
+def api_split_final(gid):
+    gid = gid.strip().upper()
+    group = db.get_group(gid)
+    if not group:
+        return _json_error("Group not found", 404)
+    current_user = _current_user_id(gid)
+    with db.get_db() as conn:
+        leader = conn.execute(
+            "SELECT id FROM members WHERE group_id = ? AND name = ? ORDER BY id LIMIT 1",
+            (gid, group["leader"]),
+        ).fetchone()
+    if not leader or current_user != int(leader["id"]):
+        return _json_error("Only leader can run final split", 403)
+    ok, msg, created = db.generate_final_split_transactions(gid)
+    if not ok:
+        return _json_error(msg, 400)
+    return jsonify({"ok": True, "created": created})
+
+
 @app.get("/api/groups/<gid>/upi/expense")
 def api_upi_expense(gid):
     """Query params: payer_id, amount, description."""
@@ -247,7 +278,7 @@ def api_upi_expense(gid):
         return _json_error("Payer not found", 404)
     if not _is_upi_id(row["upi_id"] or ""):
         return _json_error("Payer UPI ID not set. Add valid UPI ID (example: name@upi)")
-    link = upi_deep_link(row["upi_id"] or "", row["name"], amount, f"Splitzy payment: {desc}")
+    link = upi_deep_link(row["upi_id"] or "", row["name"], amount, "Splitzy payment")
     return jsonify(
         {
             "ok": True,
@@ -398,7 +429,7 @@ def api_upi_settlement(gid):
         row["upi_id"] or "",
         row["name"],
         amount,
-        f"Splitzy payment for {group_name}",
+        "Splitzy payment",
     )
     return jsonify(
         {
@@ -413,6 +444,19 @@ def api_upi_settlement(gid):
 @app.route("/health")
 def health():
     return jsonify({"status": "ok"})
+
+
+@app.get("/splitzy-logo.png")
+def splitzy_logo():
+    if USER_LOGO_PATH.exists():
+        return send_file(USER_LOGO_PATH, mimetype="image/png")
+    fallback = Path(__file__).resolve().parent / "static" / "img" / "splitzy-logo.svg"
+    return send_file(fallback, mimetype="image/svg+xml")
+
+
+@app.get("/favicon.ico")
+def favicon():
+    return splitzy_logo()
 
 
 # --- Razorpay placeholder (future verification) ---
