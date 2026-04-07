@@ -17,6 +17,12 @@
           <button type="button" id="btn-upi" class="btn btn-success w-100 btn-lg ts-scale-hover mb-2">Pay with UPI</button>
           <p class="small text-muted mb-0" id="upi-hint"></p>
         </div>
+        <div id="desktop-fallback" class="d-none mb-3 text-center">
+          <img id="upi-qr" src="" alt="UPI QR" class="img-fluid rounded border mb-2">
+          <div class="small text-muted mb-2">Scan using your phone</div>
+          <button type="button" id="btn-copy-upi" class="btn btn-sm btn-outline-secondary">Copy UPI link</button>
+        </div>
+        <button type="button" class="btn btn-ts-settle w-100 mb-2 ts-scale-hover" id="btn-claim-paid">I have paid — mark <span class="badge ts-badge-claimed align-middle">CLAIMED_PAID</span></button>
         <button type="button" class="btn btn-outline-secondary w-100 mb-2 ts-scale-hover" id="btn-cash-paid">Paid with cash — mark <span class="badge ts-badge-paid align-middle">PAID</span></button>
         <button type="button" class="btn btn-outline-warning w-100 mb-3 ts-scale-hover" id="btn-pending">Not paid yet — save as <span class="badge ts-badge-pending align-middle">PENDING</span></button>
         <p id="err" class="text-danger small d-none mb-0"></p>
@@ -33,6 +39,7 @@
   const payerId = params.get('payer_id');
   const amount = params.get('amount');
   const description = params.get('description') || '';
+  let upiLink = '';
 
   if (!payerId || !amount) {
     document.querySelector('.card-body').innerHTML = '<p class="text-danger">Missing payment details. <a href="/group/' + gid + '">Return to group</a></p>';
@@ -50,15 +57,18 @@
       const u = await fetch(`/api/groups/${gid}/upi/expense?payer_id=${encodeURIComponent(payerId)}&amount=${encodeURIComponent(amount)}&description=${encodeURIComponent(description)}`);
       const upi = await u.json();
       if (upi.ok) {
+        upiLink = upi.upi_link;
         document.getElementById('upi-block').classList.remove('d-none');
         const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
         if (!isMobile) {
           document.getElementById('upi-block').classList.add('d-none');
+          document.getElementById('desktop-fallback').classList.remove('d-none');
+          document.getElementById('upi-qr').src = 'https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=' + encodeURIComponent(upiLink);
         }
         document.getElementById('btn-upi').onclick = () => {
-          window.location.href = upi.upi_link;
+          window.location.href = upiLink;
           setTimeout(() => {
-            window.location.replace(upi.upi_link);
+            window.location.replace(upiLink);
           }, 800);
         };
         if (!upi.has_upi) {
@@ -91,8 +101,17 @@
       window.location.href = '/group/' + gid;
     }
 
+    document.getElementById('btn-claim-paid').addEventListener('click', () => save('PAID'));
     document.getElementById('btn-cash-paid').addEventListener('click', () => save('PAID'));
     document.getElementById('btn-pending').addEventListener('click', () => save('PENDING'));
+    document.getElementById('btn-copy-upi').addEventListener('click', async () => {
+      if (!upiLink) return;
+      try {
+        await navigator.clipboard.writeText(upiLink);
+      } catch {
+        prompt('Copy UPI link', upiLink);
+      }
+    });
 
     loadPayer();
   }
