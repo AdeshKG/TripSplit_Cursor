@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Confirm expense payment · TripSplit{% endblock %}
+{% block title %}Confirm expense payment · Splitzy{% endblock %}
 {% block content %}
 <div class="row justify-content-center ts-fade-in">
   <div class="col-md-7 col-lg-5">
@@ -14,7 +14,7 @@
           <div class="mt-2 small text-muted" id="pay-desc"></div>
         </div>
         <div id="upi-block" class="mb-3 d-none">
-          <a href="#" id="btn-upi" class="btn btn-success w-100 btn-lg ts-scale-hover mb-2">Pay with UPI</a>
+          <button type="button" id="btn-upi" class="btn btn-success w-100 btn-lg ts-scale-hover mb-2">Pay with UPI</button>
           <p class="small text-muted mb-0" id="upi-hint"></p>
         </div>
         <button type="button" class="btn btn-outline-secondary w-100 mb-2 ts-scale-hover" id="btn-cash-paid">Paid with cash — mark <span class="badge ts-badge-paid align-middle">PAID</span></button>
@@ -51,7 +51,16 @@
       const upi = await u.json();
       if (upi.ok) {
         document.getElementById('upi-block').classList.remove('d-none');
-        document.getElementById('btn-upi').href = upi.upi_link;
+        const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+        if (!isMobile) {
+          document.getElementById('upi-block').classList.add('d-none');
+        }
+        document.getElementById('btn-upi').onclick = () => {
+          window.location.href = upi.upi_link;
+          setTimeout(() => {
+            window.location.replace(upi.upi_link);
+          }, 800);
+        };
         if (!upi.has_upi) {
           document.getElementById('upi-hint').textContent = 'Add a UPI ID to this member on the group page for a valid payee address. Link still opens your UPI app with amount filled where supported.';
         } else {

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Settlement payment · TripSplit{% endblock %}
+{% block title %}Settlement payment · Splitzy{% endblock %}
 {% block content %}
 <div class="row justify-content-center ts-fade-in">
   <div class="col-md-7 col-lg-5">
@@ -7,19 +7,19 @@
       <div class="card-body p-4 p-md-5">
         <a href="{{ url_for('group_page', gid=gid) }}" class="small text-decoration-none mb-3 d-inline-block">← Back to group</a>
         <h1 class="h4 mb-3">Settlement</h1>
-        <p class="text-muted small mb-4">TripSplit does not hold money. Pay in your UPI app, then mark status here.</p>
+        <p class="text-muted small mb-4">Splitzy does not hold money. Pay in your UPI app, then mark status here.</p>
         <div class="p-3 rounded ts-summary-box mb-4">
           <div class="d-flex justify-content-between"><span class="text-muted">You pay</span><strong id="lbl-from">…</strong></div>
           <div class="d-flex justify-content-between mt-2"><span class="text-muted">To</span><strong id="lbl-to">…</strong></div>
           <div class="d-flex justify-content-between mt-2"><span class="text-muted">Amount</span><strong class="ts-mono" id="lbl-amt">…</strong></div>
         </div>
         <div id="upi-block" class="mb-3 d-none">
-          <a href="#" id="btn-upi" class="btn btn-success w-100 btn-lg ts-scale-hover mb-2">Pay with UPI</a>
+          <button type="button" id="btn-upi" class="btn btn-success w-100 btn-lg ts-scale-hover mb-2">Pay with UPI</button>
           <p class="small text-muted mb-0" id="upi-hint"></p>
         </div>
         <div id="desktop-fallback" class="d-none mb-3 text-center">
           <img id="upi-qr" src="" alt="UPI QR" class="img-fluid rounded border mb-2">
-          <div class="small text-muted mb-2">Desktop fallback: scan QR with any UPI app.</div>
+          <div class="small text-muted mb-2">Scan using any UPI app</div>
           <button type="button" id="btn-copy-upi" class="btn btn-sm btn-outline-secondary">Copy UPI link</button>
         </div>
         <button type="button" class="btn btn-ts-settle w-100 mb-2 ts-scale-hover" id="btn-claim-paid">I have paid — mark <span class="badge ts-badge-claimed align-middle">CLAIMED</span></button>
@@ -69,20 +69,21 @@
     }
 
     async function loadUpi() {
-      const note = 'TripSplit settlement';
+      const note = 'Splitzy payment';
       const groupRes = await fetch('/api/groups/' + gid);
       const groupData = await groupRes.json();
-      const gname = groupData.ok ? (groupData.group.name || 'TripSplit') : 'TripSplit';
+      const gname = groupData.ok ? (groupData.group.name || 'Splitzy') : 'Splitzy';
       const u = await fetch(`/api/groups/${gid}/upi/settlement?to_id=${encodeURIComponent(toId)}&amount=${encodeURIComponent(amount)}&group_name=${encodeURIComponent(gname)}&note=${encodeURIComponent(note)}`);
       const upi = await u.json();
       if (upi.ok) {
         upiLink = upi.upi_link;
         document.getElementById('upi-block').classList.remove('d-none');
-        document.getElementById('btn-upi').href = upiLink;
+        const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
         document.getElementById('upi-hint').textContent = upi.has_upi
           ? 'Mobile: opens system UPI chooser (where available).'
           : 'Add receiver UPI on group page for best results.';
-        if (!/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+        if (!isMobile) {
+          document.getElementById('upi-block').classList.add('d-none');
           document.getElementById('desktop-fallback').classList.remove('d-none');
           document.getElementById('upi-qr').src = 'https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=' + encodeURIComponent(upiLink);
         }
@@ -115,6 +116,12 @@
     document.getElementById('btn-upi').addEventListener('click', async () => {
       try {
         await ensureTransaction('UPI');
+        if (upiLink) {
+          window.location.href = upiLink;
+          setTimeout(() => {
+            window.location.replace(upiLink);
+          }, 800);
+        }
       } catch (e) {
         const err = document.getElementById('err');
         err.textContent = e.message || 'Failed';

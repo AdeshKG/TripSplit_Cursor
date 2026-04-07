@@ -1,4 +1,4 @@
-/* TripSplit — Bootstrap extension layer */
+/* Splitzy — Bootstrap extension layer */
 :root {
   --ts-bg: #f6f7f9;
   --ts-surface: #ffffff;
@@ -126,7 +126,7 @@
 }
 
 .ts-badge-settled {
-  background-color: #0d6efd !important;
+  background-color: #198754 !important;
 }
 
 .ts-badge-claimed {
