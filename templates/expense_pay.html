@@ -40,6 +40,7 @@
   const amount = params.get('amount');
   const description = params.get('description') || '';
   let upiLink = '';
+  let locked = false;
 
   if (!payerId || !amount) {
     document.querySelector('.card-body').innerHTML = '<p class="text-danger">Missing payment details. <a href="/group/' + gid + '">Return to group</a></p>';
@@ -66,6 +67,9 @@
           document.getElementById('upi-qr').src = 'https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=' + encodeURIComponent(upiLink);
         }
         document.getElementById('btn-upi').onclick = () => {
+          if (locked) return;
+          locked = true;
+          document.getElementById('btn-upi').disabled = true;
           window.location.href = upiLink;
           setTimeout(() => {
             window.location.replace(upiLink);
@@ -80,8 +84,13 @@
     }
 
     async function save(status) {
+      if (locked) return;
+      locked = true;
       const err = document.getElementById('err');
       err.classList.add('d-none');
+      document.getElementById('btn-claim-paid').disabled = true;
+      document.getElementById('btn-cash-paid').disabled = true;
+      document.getElementById('btn-pending').disabled = true;
       const res = await fetch('/api/groups/' + gid + '/expenses', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -96,6 +105,10 @@
       if (!data.ok) {
         err.textContent = data.error || 'Failed';
         err.classList.remove('d-none');
+        locked = false;
+        document.getElementById('btn-claim-paid').disabled = false;
+        document.getElementById('btn-cash-paid').disabled = false;
+        document.getElementById('btn-pending').disabled = false;
         return;
       }
       window.location.href = '/group/' + gid;

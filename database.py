@@ -118,6 +118,18 @@ def init_db():
             conn.execute("ALTER TABLE expenses ADD COLUMN split_type TEXT NOT NULL DEFAULT 'EQUAL'")
         if _column_exists(conn, "members", "upi_id"):
             conn.execute("UPDATE members SET upi_id = COALESCE(upi_id, '')")
+        conn.execute(
+            """
+            DELETE FROM transactions
+            WHERE status IN ('PENDING', 'CLAIMED_PAID')
+              AND id NOT IN (
+                SELECT MAX(id)
+                FROM transactions
+                WHERE status IN ('PENDING', 'CLAIMED_PAID')
+                GROUP BY group_id, sender_id, receiver_id
+              )
+            """
+        )
 
 
 def generate_group_id(conn, length: int = 6) -> str:
@@ -308,6 +320,18 @@ def create_transaction(
         ).fetchone()
         if not sid or not rid or sender_id == receiver_id:
             return False, "Invalid sender/receiver", None
+        existing = conn.execute(
+            """
+            SELECT id FROM transactions
+            WHERE group_id = ? AND sender_id = ? AND receiver_id = ?
+              AND status IN ('PENDING', 'CLAIMED_PAID')
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (gid, sender_id, receiver_id),
+        ).fetchone()
+        if existing:
+            return True, "existing", int(existing["id"])
         cur = conn.execute(
             """
             INSERT INTO transactions (
@@ -444,12 +468,10 @@ def generate_final_split_transactions(gid: str) -> tuple[bool, str, int]:
         if not group:
             return False, "Group not found", 0
 
-        open_tx = conn.execute(
-            "SELECT 1 FROM transactions WHERE group_id = ? AND status IN ('PENDING', 'CLAIMED_PAID') LIMIT 1",
+        conn.execute(
+            "DELETE FROM transactions WHERE group_id = ? AND status IN ('PENDING', 'CLAIMED_PAID')",
             (gid,),
-        ).fetchone()
-        if open_tx:
-            return False, "Settle existing pending transactions before final split", 0
+        )
 
         latest_paid = conn.execute(
             "SELECT COALESCE(MAX(id), 0) AS max_id FROM expenses WHERE group_id = ? AND status = 'PAID'",
@@ -480,6 +502,17 @@ def generate_final_split_transactions(gid: str) -> tuple[bool, str, int]:
         created = 0
         for from_id, to_id, amount in suggestions:
             if amount <= 0.0:
+                continue
+            exists = conn.execute(
+                """
+                SELECT 1 FROM transactions
+                WHERE group_id = ? AND sender_id = ? AND receiver_id = ?
+                  AND status IN ('PENDING', 'CLAIMED_PAID')
+                LIMIT 1
+                """,
+                (gid, int(from_id), int(to_id)),
+            ).fetchone()
+            if exists:
                 continue
             conn.execute(
                 """
