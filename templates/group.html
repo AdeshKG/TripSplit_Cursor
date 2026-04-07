@@ -4,8 +4,8 @@
 <div id="group-app" data-gid="{{ gid }}" class="ts-fade-in">
   <div class="d-flex flex-wrap align-items-start justify-content-between gap-3 mb-4">
     <div>
-      <h1 class="h3 mb-1">Your group</h1>
-      <p class="text-muted mb-0 small">Leader: <span id="field-leader">…</span></p>
+      <h1 class="h3 mb-1" id="field-group-name">Your group</h1>
+      <p class="text-muted mb-0 small">Leader: <span id="field-leader">…</span> · TripSplit tracks status only (no money is stored).</p>
     </div>
     <div class="text-end">
       <div class="small text-muted">Group ID</div>
@@ -27,7 +27,7 @@
               <input type="text" class="form-control" id="join-name" maxlength="80" placeholder="Name" required autocomplete="name">
             </div>
             <div class="input-group mb-2">
-              <input type="text" class="form-control" id="join-upi" maxlength="100" placeholder="UPI ID (optional, for one-tap pay)">
+              <input type="text" class="form-control" id="join-upi" maxlength="100" placeholder="UPI ID / phone (required)">
             </div>
             <button class="btn btn-ts-primary w-100 ts-scale-hover" type="submit">Join group</button>
             <p id="join-error" class="text-danger small mt-2 mb-0 d-none"></p>
@@ -106,7 +106,10 @@
       <div class="card ts-card border-0 shadow-sm">
         <div class="card-body">
           <h2 class="h5 card-title">Settlement payments</h2>
-          <p class="small text-muted">UPI settlements are tracked when you confirm after paying. Cash is recorded only if you confirm here (not auto-verified).</p>
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <p class="small text-muted mb-0">Track states: pending, claimed paid, settled.</p>
+            <button id="btn-reminders" class="btn btn-sm btn-outline-secondary ts-scale-hover" type="button">Send reminders</button>
+          </div>
           <div class="table-responsive">
             <table class="table table-sm align-middle mb-0 ts-table">
               <thead>
@@ -116,11 +119,20 @@
                   <th class="text-end">Amount</th>
                   <th>Type</th>
                   <th>Status</th>
+                  <th>Action</th>
                 </tr>
               </thead>
               <tbody id="settlement-rows"></tbody>
             </table>
           </div>
+        </div>
+      </div>
+
+      <div class="card ts-card border-0 shadow-sm mt-4">
+        <div class="card-body">
+          <h2 class="h5 card-title">Notifications</h2>
+          <p class="small text-muted">Instant in-app updates when a payment is claimed and reminders for pending payments.</p>
+          <ul class="list-group list-group-flush" id="notification-list"></ul>
         </div>
       </div>
     </div>
@@ -141,6 +153,7 @@
       if (status === 'PAID') return '<span class="badge ts-badge-paid">Paid</span>';
       return '<span class="badge ts-badge-pending">Pending</span>';
     }
+    if (status === 'CLAIMED_PAID') return '<span class="badge ts-badge-claimed">Waiting confirmation</span>';
     if (status === 'SETTLED') return '<span class="badge ts-badge-settled">Settled</span>';
     return '<span class="badge ts-badge-pending">Pending</span>';
   }
@@ -153,6 +166,7 @@
 
   function render() {
     if (!state) return;
+    document.getElementById('field-group-name').textContent = state.group.name || 'Your group';
     document.getElementById('field-leader').textContent = state.group.leader;
 
     const mlist = document.getElementById('member-list');
@@ -215,16 +229,30 @@
 
     const sr = document.getElementById('settlement-rows');
     if (!state.settlements.length) {
-      sr.innerHTML = '<tr><td colspan="5" class="text-muted small">No settlement payments recorded</td></tr>';
+      sr.innerHTML = '<tr><td colspan="6" class="text-muted small">No settlement payments recorded</td></tr>';
     } else {
       sr.innerHTML = state.settlements.map(s => `
         <tr>
-          <td>${escapeHtml(s.from_name)}</td>
-          <td>${escapeHtml(s.to_name)}</td>
+          <td>${escapeHtml(s.sender_name)}</td>
+          <td>${escapeHtml(s.receiver_name)}</td>
           <td class="text-end">₹${fmt(s.amount)}</td>
           <td>${s.payment_type}</td>
           <td>${badge(s.status, 'settlement')}</td>
+          <td>${s.status === 'CLAIMED_PAID' ? `<button class="btn btn-sm btn-outline-success btn-confirm-received" data-id="${s.id}" data-receiver="${s.receiver_id}">Confirm</button> <button class="btn btn-sm btn-outline-warning btn-reject-received" data-id="${s.id}" data-receiver="${s.receiver_id}">Not received</button>` : ''}</td>
         </tr>`).join('');
+    }
+    document.querySelectorAll('.btn-confirm-received').forEach((b) => {
+      b.addEventListener('click', () => confirmTx(b.dataset.id, b.dataset.receiver, true));
+    });
+    document.querySelectorAll('.btn-reject-received').forEach((b) => {
+      b.addEventListener('click', () => confirmTx(b.dataset.id, b.dataset.receiver, false));
+    });
+
+    const nl = document.getElementById('notification-list');
+    if (!state.notifications || !state.notifications.length) {
+      nl.innerHTML = '<li class="list-group-item px-0 text-muted small">No notifications yet.</li>';
+    } else {
+      nl.innerHTML = state.notifications.map(n => `<li class="list-group-item px-0"><span class="small text-muted">${n.created_at}</span><br>${escapeHtml(n.message)}</li>`).join('');
     }
   }
 
@@ -234,7 +262,8 @@
   }
 
   async function load() {
-    const res = await fetch('/api/groups/' + gid);
+    const q = selectedPayer ? ('?notifications_for=' + encodeURIComponent(selectedPayer)) : '';
+    const res = await fetch('/api/groups/' + gid + q);
     const data = await res.json();
     if (!data.ok) {
       document.getElementById('expense-rows').innerHTML = '<tr><td colspan="4" class="text-danger small">Could not load group</td></tr>';
@@ -291,6 +320,20 @@
       amount: amt,
     });
     window.location.href = '/group/' + gid + '/expense/pay?' + q.toString();
+  });
+
+  async function confirmTx(id, receiverId, received) {
+    await fetch(`/api/groups/${gid}/settlements/${id}/confirm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ receiver_id: parseInt(receiverId, 10), received }),
+    });
+    await load();
+  }
+
+  document.getElementById('btn-reminders').addEventListener('click', async () => {
+    await fetch(`/api/groups/${gid}/notifications/reminders`, { method: 'POST' });
+    await load();
   });
 
   load();

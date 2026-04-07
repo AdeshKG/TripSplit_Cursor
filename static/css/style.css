@@ -129,6 +129,10 @@
   background-color: #0d6efd !important;
 }
 
+.ts-badge-claimed {
+  background-color: #5a67d8 !important;
+}
+
 @media (max-width: 576px) {
   .ts-card .card-body {
     padding: 1.25rem !important;

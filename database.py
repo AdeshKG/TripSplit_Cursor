@@ -31,12 +31,18 @@ def get_db():
         conn.close()
 
 
+def _column_exists(conn, table_name: str, column_name: str) -> bool:
+    rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    return any(r["name"] == column_name for r in rows)
+
+
 def init_db():
     with get_db() as conn:
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS groups (
                 id TEXT PRIMARY KEY,
+                name TEXT,
                 leader TEXT NOT NULL,
                 created_at TEXT DEFAULT (datetime('now'))
             );
@@ -45,7 +51,7 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 group_id TEXT NOT NULL,
                 name TEXT NOT NULL,
-                upi_id TEXT,
+                upi_id TEXT NOT NULL,
                 UNIQUE(group_id, name),
                 FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE
             );
@@ -56,6 +62,7 @@ def init_db():
                 payer_id INTEGER NOT NULL,
                 description TEXT NOT NULL,
                 amount REAL NOT NULL,
+                split_type TEXT NOT NULL DEFAULT 'EQUAL',
                 status TEXT NOT NULL CHECK(status IN ('PAID', 'PENDING')),
                 participant_ids TEXT NOT NULL,
                 created_at TEXT DEFAULT (datetime('now')),
@@ -63,25 +70,49 @@ def init_db():
                 FOREIGN KEY (payer_id) REFERENCES members(id) ON DELETE CASCADE
             );
 
-            CREATE TABLE IF NOT EXISTS settlements (
+            CREATE TABLE IF NOT EXISTS transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 group_id TEXT NOT NULL,
-                from_user INTEGER NOT NULL,
-                to_user INTEGER NOT NULL,
+                sender_id INTEGER NOT NULL,
+                receiver_id INTEGER NOT NULL,
                 amount REAL NOT NULL,
-                status TEXT NOT NULL CHECK(status IN ('PENDING', 'SETTLED')),
+                status TEXT NOT NULL CHECK(status IN ('PENDING', 'CLAIMED_PAID', 'SETTLED')),
                 payment_type TEXT NOT NULL CHECK(payment_type IN ('UPI', 'CASH')),
+                transaction_ref TEXT,
+                proof_image TEXT,
+                claimed_at TEXT,
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now')),
+                FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
+                FOREIGN KEY (sender_id) REFERENCES members(id) ON DELETE CASCADE,
+                FOREIGN KEY (receiver_id) REFERENCES members(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id TEXT NOT NULL,
+                member_id INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                message TEXT NOT NULL,
+                is_read INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT DEFAULT (datetime('now')),
                 FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
-                FOREIGN KEY (from_user) REFERENCES members(id) ON DELETE CASCADE,
-                FOREIGN KEY (to_user) REFERENCES members(id) ON DELETE CASCADE
+                FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
             );
 
             CREATE INDEX IF NOT EXISTS idx_members_group ON members(group_id);
             CREATE INDEX IF NOT EXISTS idx_expenses_group ON expenses(group_id);
-            CREATE INDEX IF NOT EXISTS idx_settlements_group ON settlements(group_id);
+            CREATE INDEX IF NOT EXISTS idx_transactions_group ON transactions(group_id);
+            CREATE INDEX IF NOT EXISTS idx_notifications_group_member ON notifications(group_id, member_id);
             """
         )
+
+        if not _column_exists(conn, "groups", "name"):
+            conn.execute("ALTER TABLE groups ADD COLUMN name TEXT")
+        if not _column_exists(conn, "expenses", "split_type"):
+            conn.execute("ALTER TABLE expenses ADD COLUMN split_type TEXT NOT NULL DEFAULT 'EQUAL'")
+        if _column_exists(conn, "members", "upi_id"):
+            conn.execute("UPDATE members SET upi_id = COALESCE(upi_id, '')")
 
 
 def generate_group_id(conn, length: int = 6) -> str:
@@ -94,12 +125,19 @@ def generate_group_id(conn, length: int = 6) -> str:
     raise RuntimeError("Could not allocate group id")
 
 
-def create_group(leader_name: str) -> tuple[str, int]:
+def create_group(group_name: str, leader_name: str, leader_upi: str) -> tuple[str, int]:
+    group_name = (group_name or "").strip()
+    leader_name = (leader_name or "").strip()
+    leader_upi = (leader_upi or "").strip()
     with get_db() as conn:
         gid = generate_group_id(conn)
-        conn.execute("INSERT INTO groups (id, leader) VALUES (?, ?)", (gid, leader_name))
+        conn.execute(
+            "INSERT INTO groups (id, name, leader) VALUES (?, ?, ?)",
+            (gid, group_name, leader_name),
+        )
         cur = conn.execute(
-            "INSERT INTO members (group_id, name) VALUES (?, ?)", (gid, leader_name)
+            "INSERT INTO members (group_id, name, upi_id) VALUES (?, ?, ?)",
+            (gid, leader_name, leader_upi),
         )
         return gid, cur.lastrowid
 
@@ -119,8 +157,11 @@ def list_members(conn, gid: str) -> list[sqlite3.Row]:
 
 def add_member(gid: str, name: str, upi_id: str | None = None) -> tuple[bool, str, int | None]:
     name = (name or "").strip()
+    upi_id = (upi_id or "").strip()
     if not name:
         return False, "Name cannot be empty", None
+    if not upi_id:
+        return False, "UPI ID or UPI-linked phone is required", None
     with get_db() as conn:
         if not conn.execute("SELECT 1 FROM groups WHERE id = ?", (gid,)).fetchone():
             return False, "Group not found", None
@@ -132,16 +173,19 @@ def add_member(gid: str, name: str, upi_id: str | None = None) -> tuple[bool, st
             return False, "That name is already in this group", None
         cur = conn.execute(
             "INSERT INTO members (group_id, name, upi_id) VALUES (?, ?, ?)",
-            (gid, name, (upi_id or "").strip() or None),
+            (gid, name, upi_id),
         )
         return True, "ok", cur.lastrowid
 
 
 def update_member_upi(gid: str, member_id: int, upi_id: str) -> bool:
+    upi_id = (upi_id or "").strip()
+    if not upi_id:
+        return False
     with get_db() as conn:
         r = conn.execute(
             "UPDATE members SET upi_id = ? WHERE id = ? AND group_id = ?",
-            ((upi_id or "").strip() or None, member_id, gid),
+            (upi_id, member_id, gid),
         )
         return r.rowcount > 0
 
@@ -158,9 +202,12 @@ def add_expense(
     amount: float,
     status: str,
     participant_ids: list[int] | None = None,
+    split_type: str = "EQUAL",
 ) -> tuple[bool, str, int | None]:
     if status not in ("PAID", "PENDING"):
         return False, "Invalid status", None
+    if split_type not in ("EQUAL", "CUSTOM"):
+        return False, "Invalid split_type", None
     description = (description or "").strip()
     if not description:
         return False, "Description required", None
@@ -197,10 +244,10 @@ def add_expense(
         pid_json = json.dumps(participant_ids)
         cur = conn.execute(
             """
-            INSERT INTO expenses (group_id, payer_id, description, amount, status, participant_ids)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO expenses (group_id, payer_id, description, amount, split_type, status, participant_ids)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (gid, payer_id, description, amount, status, pid_json),
+            (gid, payer_id, description, amount, split_type, status, pid_json),
         )
         return True, "ok", cur.lastrowid
 
@@ -218,49 +265,111 @@ def list_expenses(conn, gid: str) -> list[sqlite3.Row]:
     ).fetchall()
 
 
-def list_settlements(conn, gid: str) -> list[sqlite3.Row]:
+def list_transactions(conn, gid: str) -> list[sqlite3.Row]:
     return conn.execute(
         """
-        SELECT s.*, mf.name AS from_name, mt.name AS to_name
-        FROM settlements s
-        JOIN members mf ON mf.id = s.from_user
-        JOIN members mt ON mt.id = s.to_user
-        WHERE s.group_id = ?
-        ORDER BY s.id DESC
+        SELECT t.*, ms.name AS sender_name, mr.name AS receiver_name
+        FROM transactions t
+        JOIN members ms ON ms.id = t.sender_id
+        JOIN members mr ON mr.id = t.receiver_id
+        WHERE t.group_id = ?
+        ORDER BY t.id DESC
         """,
         (gid,),
     ).fetchall()
 
 
-def insert_settlement(
-    gid: str, from_id: int, to_id: int, amount: float, status: str, payment_type: str
-) -> int | None:
-    if status not in ("PENDING", "SETTLED") or payment_type not in ("UPI", "CASH"):
-        return None
+def create_transaction(
+    gid: str,
+    sender_id: int,
+    receiver_id: int,
+    amount: float,
+    payment_type: str,
+    transaction_ref: str | None = None,
+    proof_image: str | None = None,
+) -> tuple[bool, str, int | None]:
+    if payment_type not in ("UPI", "CASH"):
+        return False, "Invalid payment type", None
+    if amount <= 0:
+        return False, "Amount must be positive", None
     with get_db() as conn:
+        sid = conn.execute(
+            "SELECT 1 FROM members WHERE id = ? AND group_id = ?",
+            (sender_id, gid),
+        ).fetchone()
+        rid = conn.execute(
+            "SELECT 1 FROM members WHERE id = ? AND group_id = ?",
+            (receiver_id, gid),
+        ).fetchone()
+        if not sid or not rid or sender_id == receiver_id:
+            return False, "Invalid sender/receiver", None
         cur = conn.execute(
             """
-            INSERT INTO settlements (group_id, from_user, to_user, amount, status, payment_type)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO transactions (
+                group_id, sender_id, receiver_id, amount, status, payment_type, transaction_ref, proof_image
+            ) VALUES (?, ?, ?, ?, 'PENDING', ?, ?, ?)
             """,
-            (gid, from_id, to_id, amount, status, payment_type),
+            (gid, sender_id, receiver_id, amount, payment_type, transaction_ref, proof_image),
         )
-        return cur.lastrowid
+        return True, "ok", cur.lastrowid
 
 
-def update_settlement_status(sid: int, gid: str, status: str) -> bool:
-    if status not in ("PENDING", "SETTLED"):
-        return False
+def claim_transaction_paid(
+    gid: str, transaction_id: int, sender_id: int, transaction_ref: str | None = None, proof_image: str | None = None
+) -> bool:
     with get_db() as conn:
         r = conn.execute(
-            "UPDATE settlements SET status = ? WHERE id = ? AND group_id = ?",
-            (status, sid, gid),
+            """
+            UPDATE transactions
+            SET status = 'CLAIMED_PAID',
+                claimed_at = datetime('now'),
+                updated_at = datetime('now'),
+                transaction_ref = COALESCE(?, transaction_ref),
+                proof_image = COALESCE(?, proof_image)
+            WHERE id = ? AND group_id = ? AND sender_id = ? AND status = 'PENDING'
+            """,
+            (transaction_ref, proof_image, transaction_id, gid, sender_id),
         )
         return r.rowcount > 0
 
 
+def confirm_transaction(
+    gid: str, transaction_id: int, receiver_id: int, received: bool
+) -> bool:
+    next_status = "SETTLED" if received else "PENDING"
+    with get_db() as conn:
+        r = conn.execute(
+            """
+            UPDATE transactions
+            SET status = ?, updated_at = datetime('now')
+            WHERE id = ? AND group_id = ? AND receiver_id = ? AND status = 'CLAIMED_PAID'
+            """,
+            (next_status, transaction_id, gid, receiver_id),
+        )
+        return r.rowcount > 0
+
+
+def create_notification(gid: str, member_id: int, kind: str, message: str):
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO notifications (group_id, member_id, kind, message) VALUES (?, ?, ?, ?)",
+            (gid, member_id, kind, message),
+        )
+
+
+def list_notifications(conn, gid: str, member_id: int) -> list[sqlite3.Row]:
+    return conn.execute(
+        """
+        SELECT * FROM notifications
+        WHERE group_id = ? AND member_id = ?
+        ORDER BY id DESC
+        LIMIT 30
+        """,
+        (gid, member_id),
+    ).fetchall()
+
+
 def compute_balances_and_suggestions(conn, gid: str):
-    """Returns (per_member_stats, net_after_settlements, suggested_transfers)."""
     members = list_members(conn, gid)
     mids = [m["id"] for m in members]
     if not mids:
@@ -289,17 +398,17 @@ def compute_balances_and_suggestions(conn, gid: str):
             if pid in share_total:
                 share_total[pid] += share
 
-    settlements = conn.execute(
-        "SELECT * FROM settlements WHERE group_id = ? AND status = 'SETTLED'",
+    txns = conn.execute(
+        "SELECT * FROM transactions WHERE group_id = ? AND status = 'SETTLED'",
         (gid,),
     ).fetchall()
     net: dict[int, float] = {}
     for m in mids:
         net[m] = paid_total.get(m, 0) - share_total.get(m, 0)
 
-    for s in settlements:
-        fid, tid = int(s["from_user"]), int(s["to_user"])
-        amt = float(s["amount"])
+    for t in txns:
+        fid, tid = int(t["sender_id"]), int(t["receiver_id"])
+        amt = float(t["amount"])
         if fid in net:
             net[fid] += amt
         if tid in net:
