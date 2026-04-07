@@ -8,9 +8,15 @@
         <h1 class="h3 mb-2">Start a new group</h1>
         <p class="text-muted mb-4">No login — you get a shareable link and a 6-character group ID. Add expenses, pay with UPI, and settle in fewer transactions.</p>
         <form id="create-form" class="ts-fade-in" style="animation-delay: 0.08s">
+          <label class="form-label" for="group-name">Group name</label>
+          <input type="text" class="form-control form-control-lg mb-3" id="group-name" name="group-name" required maxlength="100"
+                 placeholder="e.g. Goa Trip 2026">
           <label class="form-label" for="leader">Your name (group leader)</label>
           <input type="text" class="form-control form-control-lg mb-3" id="leader" name="leader" required maxlength="80"
                  placeholder="e.g. Adesh" autocomplete="name">
+          <label class="form-label" for="leader-upi">Your UPI ID / phone</label>
+          <input type="text" class="form-control form-control-lg mb-3" id="leader-upi" name="leader-upi" required maxlength="100"
+                 placeholder="adesh@okaxis or 98xxxxxxxx">
           <button type="submit" class="btn btn-ts-primary btn-lg w-100 ts-scale-hover">Create group</button>
         </form>
         <p id="create-error" class="text-danger small mt-3 mb-0 d-none"></p>
@@ -30,11 +36,13 @@ document.getElementById('create-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const err = document.getElementById('create-error');
   err.classList.add('d-none');
+  const name = document.getElementById('group-name').value.trim();
   const leader = document.getElementById('leader').value.trim();
+  const leader_upi = document.getElementById('leader-upi').value.trim();
   const res = await fetch('/api/groups', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ leader }),
+    body: JSON.stringify({ name, leader, leader_upi }),
   });
   const data = await res.json();
   if (!data.ok) {

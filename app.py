@@ -1,4 +1,3 @@
-import json
 import os
 from urllib.parse import quote
 
@@ -29,8 +28,16 @@ def _group_state(gid: str):
             return None
         members = db.list_members(conn, gid)
         expenses = db.list_expenses(conn, gid)
-        settlements = db.list_settlements(conn, gid)
+        settlements = db.list_transactions(conn, gid)
         per_member, net, suggested = db.compute_balances_and_suggestions(conn, gid)
+        notifications_for = request.args.get("notifications_for")
+        notifications = []
+        if notifications_for:
+            try:
+                nmid = int(notifications_for)
+                notifications = [dict(n) for n in db.list_notifications(conn, gid, nmid)]
+            except (TypeError, ValueError):
+                notifications = []
 
     member_by_id = {m["id"]: dict(m) for m in members}
     sug_named = []
@@ -53,6 +60,7 @@ def _group_state(gid: str):
         "settlements": [dict(s) for s in settlements],
         "balances": list(per_member.values()),
         "suggested_settlements": sug_named,
+        "notifications": notifications,
     }
 
 
@@ -88,10 +96,16 @@ def settle_pay_page(gid):
 @app.post("/api/groups")
 def api_create_group():
     data = request.get_json(silent=True) or {}
+    group_name = (data.get("name") or "").strip()
     leader = (data.get("leader") or "").strip()
+    leader_upi = (data.get("leader_upi") or "").strip()
+    if not group_name:
+        return _json_error("Group name is required")
     if not leader:
         return _json_error("Leader name is required")
-    gid, _ = db.create_group(leader)
+    if not leader_upi:
+        return _json_error("Leader UPI ID or UPI-linked phone is required")
+    gid, _ = db.create_group(group_name, leader, leader_upi)
     return jsonify({"ok": True, "group_id": gid, "redirect": url_for("group_page", gid=gid)})
 
 
@@ -155,6 +169,7 @@ def api_add_expense(gid):
         data.get("amount"),
         status,
         parts,
+        (data.get("split_type") or "EQUAL").upper(),
     )
     if not ok:
         return _json_error(msg)
@@ -203,18 +218,89 @@ def api_add_settlement(gid):
         amount = float(data.get("amount"))
     except (TypeError, ValueError):
         return _json_error("Invalid settlement payload")
-    ptype = (data.get("payment_type") or "UPI").upper()
-    if ptype not in ("UPI", "CASH"):
-        return _json_error("payment_type must be UPI or CASH")
-    confirmed = bool(data.get("confirmed"))
-    if not confirmed:
-        return _json_error("Confirm payment to record settlement")
-    if amount <= 0:
-        return _json_error("Amount must be positive")
-    sid = db.insert_settlement(gid, from_id, to_id, amount, "SETTLED", ptype)
-    if not sid:
-        return _json_error("Could not save settlement", 500)
-    return jsonify({"ok": True, "settlement_id": sid})
+    payment_type = (data.get("payment_type") or "UPI").upper()
+    ok, msg, sid = db.create_transaction(
+        gid,
+        from_id,
+        to_id,
+        amount,
+        payment_type,
+        (data.get("transaction_ref") or "").strip() or None,
+        (data.get("proof_image") or "").strip() or None,
+    )
+    if not ok:
+        return _json_error(msg)
+    return jsonify({"ok": True, "transaction_id": sid})
+
+
+@app.post("/api/groups/<gid>/settlements/<int:sid>/claim")
+def api_claim_settlement(gid, sid):
+    gid = gid.strip().upper()
+    if not db.get_group(gid):
+        return _json_error("Group not found", 404)
+    data = request.get_json(silent=True) or {}
+    try:
+        sender_id = int(data.get("sender_id"))
+        receiver_id = int(data.get("receiver_id"))
+        amount = float(data.get("amount"))
+    except (TypeError, ValueError):
+        return _json_error("Invalid payload")
+    if not db.claim_transaction_paid(
+        gid,
+        sid,
+        sender_id,
+        (data.get("transaction_ref") or "").strip() or None,
+        (data.get("proof_image") or "").strip() or None,
+    ):
+        return _json_error("Could not claim payment", 400)
+    db.create_notification(
+        gid,
+        receiver_id,
+        "PAYMENT_CLAIMED",
+        f"Member #{sender_id} says they paid INR {amount:.2f}. Confirm receipt.",
+    )
+    return jsonify({"ok": True})
+
+
+@app.post("/api/groups/<gid>/settlements/<int:sid>/confirm")
+def api_confirm_settlement(gid, sid):
+    gid = gid.strip().upper()
+    if not db.get_group(gid):
+        return _json_error("Group not found", 404)
+    data = request.get_json(silent=True) or {}
+    try:
+        receiver_id = int(data.get("receiver_id"))
+    except (TypeError, ValueError):
+        return _json_error("Invalid receiver_id")
+    received = bool(data.get("received"))
+    if not db.confirm_transaction(gid, sid, receiver_id, received):
+        return _json_error("Could not update transaction", 400)
+    return jsonify({"ok": True, "status": "SETTLED" if received else "PENDING"})
+
+
+@app.post("/api/groups/<gid>/notifications/reminders")
+def api_create_reminders(gid):
+    gid = gid.strip().upper()
+    if not db.get_group(gid):
+        return _json_error("Group not found", 404)
+    with db.get_db() as conn:
+        rows = conn.execute(
+            """
+            SELECT t.id, t.sender_id, t.amount, mr.name receiver_name
+            FROM transactions t
+            JOIN members mr ON mr.id = t.receiver_id
+            WHERE t.group_id = ? AND t.status = 'PENDING'
+            """,
+            (gid,),
+        ).fetchall()
+    for r in rows:
+        db.create_notification(
+            gid,
+            r["sender_id"],
+            "PAYMENT_REMINDER",
+            f"Reminder: pay {r['receiver_name']} INR {float(r['amount']):.2f} for tx #{r['id']}.",
+        )
+    return jsonify({"ok": True, "created": len(rows)})
 
 
 @app.get("/api/groups/<gid>/upi/settlement")
@@ -229,6 +315,7 @@ def api_upi_settlement(gid):
     except (TypeError, ValueError):
         return _json_error("Invalid parameters")
     note = (request.args.get("note") or "TripSplit settlement").strip()
+    group_name = (request.args.get("group_name") or "TripSplit").strip()
     with db.get_db() as conn:
         row = conn.execute(
             "SELECT name, upi_id FROM members WHERE id = ? AND group_id = ?",
@@ -236,7 +323,12 @@ def api_upi_settlement(gid):
         ).fetchone()
     if not row:
         return _json_error("Payee not found", 404)
-    link = upi_deep_link(row["upi_id"] or "", row["name"], amount, note)
+    link = upi_deep_link(
+        row["upi_id"] or "",
+        row["name"],
+        amount,
+        f"Payment for {group_name}: {note}",
+    )
     return jsonify(
         {
             "ok": True,
