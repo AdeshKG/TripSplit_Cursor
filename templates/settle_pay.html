@@ -42,6 +42,7 @@
   const toName = p.get('to_name') || '';
   let txId = null;
   let upiLink = '';
+  let isSubmitting = false;
 
   if (!fromId || !toId || !amount) {
     document.querySelector('.card-body').innerHTML = '<p class="text-danger">Missing settlement details. <a href="/group/' + gid + '">Return to group</a></p>';
@@ -91,8 +92,12 @@
     }
 
     async function claimPaid(ptype) {
+      if (isSubmitting) return;
       const err = document.getElementById('err');
       err.classList.add('d-none');
+      isSubmitting = true;
+      document.getElementById('btn-claim-paid').disabled = true;
+      document.getElementById('btn-cash').disabled = true;
       try {
         const id = await ensureTransaction(ptype);
         const res = await fetch(`/api/groups/${gid}/settlements/${id}/claim`, {
@@ -110,10 +115,16 @@
       } catch (e) {
         err.textContent = e.message || 'Failed';
         err.classList.remove('d-none');
+        isSubmitting = false;
+        document.getElementById('btn-claim-paid').disabled = false;
+        document.getElementById('btn-cash').disabled = false;
       }
     }
 
     document.getElementById('btn-upi').addEventListener('click', async () => {
+      if (isSubmitting) return;
+      const payBtn = document.getElementById('btn-upi');
+      payBtn.disabled = true;
       try {
         await ensureTransaction('UPI');
         if (upiLink) {
@@ -126,6 +137,7 @@
         const err = document.getElementById('err');
         err.textContent = e.message || 'Failed';
         err.classList.remove('d-none');
+        payBtn.disabled = false;
       }
     });
     document.getElementById('btn-copy-upi').addEventListener('click', async () => {

@@ -20,7 +20,7 @@ def upi_deep_link(payee_upi: str, payee_name: str, amount: float, note: str) -> 
         pa = pa.replace(" ", "")
     pn = quote((payee_name or "Payee").strip(), safe=" ")
     am = f"{float(amount):.2f}"
-    tn = quote((note or "Splitzy payment")[:80], safe=" ")
+    tn = quote((note or "Splitzy")[:80], safe=" ")
     return f"upi://pay?pa={pa}&pn={pn}&am={am}&cu=INR&tn={tn}"
 
 
@@ -278,7 +278,7 @@ def api_upi_expense(gid):
         return _json_error("Payer not found", 404)
     if not _is_upi_id(row["upi_id"] or ""):
         return _json_error("Payer UPI ID not set. Add valid UPI ID (example: name@upi)")
-    link = upi_deep_link(row["upi_id"] or "", row["name"], amount, "Splitzy payment")
+    link = upi_deep_link(row["upi_id"] or "", row["name"], amount, "Splitzy")
     return jsonify(
         {
             "ok": True,
@@ -414,8 +414,6 @@ def api_upi_settlement(gid):
         amount = float(request.args.get("amount", 0))
     except (TypeError, ValueError):
         return _json_error("Invalid parameters")
-    note = (request.args.get("note") or "Splitzy payment").strip()
-    group_name = (request.args.get("group_name") or "Splitzy").strip()
     with db.get_db() as conn:
         row = conn.execute(
             "SELECT name, upi_id FROM members WHERE id = ? AND group_id = ?",
@@ -429,7 +427,7 @@ def api_upi_settlement(gid):
         row["upi_id"] or "",
         row["name"],
         amount,
-        "Splitzy payment",
+        "Splitzy",
     )
     return jsonify(
         {
