@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}Group {{ gid }} · TripSplit{% endblock %}
+{% block title %}Group {{ gid }} · Splitzy{% endblock %}
 {% block content %}
 <div id="group-app" data-gid="{{ gid }}" class="ts-fade-in">
   <div class="d-flex flex-wrap align-items-start justify-content-between gap-3 mb-4">
     <div>
       <h1 class="h3 mb-1" id="field-group-name">Your group</h1>
-      <p class="text-muted mb-0 small">Leader: <span id="field-leader">…</span> · TripSplit tracks status only (no money is stored).</p>
+      <p class="text-muted mb-0 small">Leader: <span id="field-leader">…</span> · Splitzy tracks status only (no money is stored).</p>
     </div>
     <div class="text-end">
       <div class="small text-muted">Group ID</div>
@@ -20,6 +20,8 @@
       <div class="card ts-card border-0 shadow-sm mb-4">
         <div class="card-body">
           <h2 class="h5 card-title">Members</h2>
+          <label class="form-label small text-muted" for="current-user-select">You are</label>
+          <select id="current-user-select" class="form-select mb-3"></select>
           <ul class="list-group list-group-flush mb-3" id="member-list"></ul>
           <form id="join-form" class="border-top pt-3">
             <label class="form-label small text-muted">Join with your name</label>
@@ -117,7 +119,6 @@
                   <th>From</th>
                   <th>To</th>
                   <th class="text-end">Amount</th>
-                  <th>Type</th>
                   <th>Status</th>
                   <th>Action</th>
                 </tr>
@@ -131,7 +132,7 @@
       <div class="card ts-card border-0 shadow-sm mt-4">
         <div class="card-body">
           <h2 class="h5 card-title">Notifications</h2>
-          <p class="small text-muted">Instant in-app updates when a payment is claimed and reminders for pending payments.</p>
+          <p class="small text-muted">Sender claims and receiver reminders.</p>
           <ul class="list-group list-group-flush" id="notification-list"></ul>
         </div>
       </div>
@@ -147,6 +148,7 @@
 
   let state = null;
   let selectedPayer = null;
+  let currentUserId = null;
 
   function badge(status, type) {
     if (type === 'expense') {
@@ -168,6 +170,7 @@
     if (!state) return;
     document.getElementById('field-group-name').textContent = state.group.name || 'Your group';
     document.getElementById('field-leader').textContent = state.group.leader;
+    currentUserId = state.current_user_id || currentUserId;
 
     const mlist = document.getElementById('member-list');
     mlist.innerHTML = state.members.map(m => {
@@ -179,6 +182,11 @@
         <span class="small text-muted">#${m.id}</span>
       </li>`;
     }).join('') || '<li class="list-group-item px-0 text-muted small">No members yet</li>';
+
+    const sel = document.getElementById('current-user-select');
+    sel.innerHTML = `<option value="">Select member</option>` + state.members.map(m =>
+      `<option value="${m.id}" ${currentUserId === m.id ? 'selected' : ''}>${escapeHtml(m.name)}</option>`
+    ).join('');
 
     const pwrap = document.getElementById('payer-buttons');
     pwrap.innerHTML = state.members.map(m => {
@@ -222,30 +230,36 @@
       sl.innerHTML = state.suggested_settlements.map(s => `
         <li class="list-group-item px-0 d-flex flex-wrap justify-content-between align-items-center gap-2">
           <span><strong>${escapeHtml(s.from_name)}</strong> pays <strong>${escapeHtml(s.to_name)}</strong> <span class="ts-mono">₹${fmt(s.amount)}</span></span>
-          <a class="btn btn-sm btn-ts-primary ts-scale-hover"
-             href="/group/${gid}/settle/pay?from_id=${s.from_id}&to_id=${s.to_id}&amount=${encodeURIComponent(s.amount)}&from_name=${encodeURIComponent(s.from_name)}&to_name=${encodeURIComponent(s.to_name)}">Pay</a>
+          ${currentUserId === s.from_id ? `<a class="btn btn-sm btn-ts-primary ts-scale-hover"
+             href="/group/${gid}/settle/pay?from_id=${s.from_id}&to_id=${s.to_id}&amount=${encodeURIComponent(s.amount)}&from_name=${encodeURIComponent(s.from_name)}&to_name=${encodeURIComponent(s.to_name)}">Pay</a>` : ''}
         </li>`).join('');
     }
 
     const sr = document.getElementById('settlement-rows');
     if (!state.settlements.length) {
-      sr.innerHTML = '<tr><td colspan="6" class="text-muted small">No settlement payments recorded</td></tr>';
+      sr.innerHTML = '<tr><td colspan="5" class="text-muted small">No settlement payments recorded</td></tr>';
     } else {
       sr.innerHTML = state.settlements.map(s => `
         <tr>
           <td>${escapeHtml(s.sender_name)}</td>
           <td>${escapeHtml(s.receiver_name)}</td>
           <td class="text-end">₹${fmt(s.amount)}</td>
-          <td>${s.payment_type}</td>
           <td>${badge(s.status, 'settlement')}</td>
-          <td>${s.status === 'CLAIMED_PAID' ? `<button class="btn btn-sm btn-outline-success btn-confirm-received" data-id="${s.id}" data-receiver="${s.receiver_id}">Confirm</button> <button class="btn btn-sm btn-outline-warning btn-reject-received" data-id="${s.id}" data-receiver="${s.receiver_id}">Not received</button>` : ''}</td>
+          <td>
+            ${s.status === 'PENDING' && currentUserId === s.sender_id
+              ? `<a class="btn btn-sm btn-ts-primary" href="/group/${gid}/settle/pay?from_id=${s.sender_id}&to_id=${s.receiver_id}&amount=${encodeURIComponent(s.amount)}&from_name=${encodeURIComponent(s.sender_name)}&to_name=${encodeURIComponent(s.receiver_name)}">Pay</a>`
+              : ''}
+            ${s.status === 'CLAIMED_PAID' && currentUserId === s.receiver_id
+              ? `<button class="btn btn-sm btn-outline-success btn-confirm-received" data-id="${s.id}">Confirm Received</button> <button class="btn btn-sm btn-outline-warning btn-reject-received" data-id="${s.id}">Reject</button>`
+              : ''}
+          </td>
         </tr>`).join('');
     }
     document.querySelectorAll('.btn-confirm-received').forEach((b) => {
-      b.addEventListener('click', () => confirmTx(b.dataset.id, b.dataset.receiver, true));
+      b.addEventListener('click', () => confirmTx(b.dataset.id, true));
     });
     document.querySelectorAll('.btn-reject-received').forEach((b) => {
-      b.addEventListener('click', () => confirmTx(b.dataset.id, b.dataset.receiver, false));
+      b.addEventListener('click', () => confirmTx(b.dataset.id, false));
     });
 
     const nl = document.getElementById('notification-list');
@@ -262,8 +276,7 @@
   }
 
   async function load() {
-    const q = selectedPayer ? ('?notifications_for=' + encodeURIComponent(selectedPayer)) : '';
-    const res = await fetch('/api/groups/' + gid + q);
+    const res = await fetch('/api/groups/' + gid);
     const data = await res.json();
     if (!data.ok) {
       document.getElementById('expense-rows').innerHTML = '<tr><td colspan="4" class="text-danger small">Could not load group</td></tr>';
@@ -322,11 +335,11 @@
     window.location.href = '/group/' + gid + '/expense/pay?' + q.toString();
   });
 
-  async function confirmTx(id, receiverId, received) {
+  async function confirmTx(id, received) {
     await fetch(`/api/groups/${gid}/settlements/${id}/confirm`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ receiver_id: parseInt(receiverId, 10), received }),
+      body: JSON.stringify({ received }),
     });
     await load();
   }
@@ -334,6 +347,20 @@
   document.getElementById('btn-reminders').addEventListener('click', async () => {
     await fetch(`/api/groups/${gid}/notifications/reminders`, { method: 'POST' });
     await load();
+  });
+  document.getElementById('current-user-select').addEventListener('change', async (e) => {
+    const value = e.target.value;
+    if (!value) return;
+    const res = await fetch(`/api/groups/${gid}/current-user`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ member_id: parseInt(value, 10) }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      currentUserId = data.current_user_id;
+      await load();
+    }
   });
 
   load();
